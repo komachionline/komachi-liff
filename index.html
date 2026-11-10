@@ -17,7 +17,7 @@
       animation: spin 0.9s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    p { font-size: 15px; line-height: 1.7; margin: 0 0 16px; }
+    p { font-size: 15px; line-height: 1.7; margin: 0 0 16px; white-space: pre-line; }
     button {
       font-size: 15px; padding: 12px 24px; border: none; border-radius: 8px;
       background: #06c755; color: #fff;
@@ -47,6 +47,23 @@
       location.reload();
     });
 
+    // お客様のトークから、クリニックへ予約コードを一言送る
+    // （管理画面のチャットにお客様が表示され、予約コードで照合できるようにするため）
+    // 送れなかった場合も、予約フォームはそのまま開く
+    async function sendBookingMessage(code) {
+      try {
+        if (!liff.isInClient()) return;               // LINEアプリの外で開いた場合は送らない
+        const ctx = liff.getContext();
+        if (!ctx || !['utou', 'room', 'group'].includes(ctx.type)) return;
+        await liff.sendMessages([{
+          type: 'text',
+          text: '【オンライン診療予約】\n予約フォームを開きました。\n予約コード：' + code,
+        }]);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
     async function main() {
       try {
         await liff.init({ liffId: LIFF_ID });
@@ -67,6 +84,11 @@
           return;
         }
         if (!data.url) throw new Error(data.error || '予約フォームを準備できませんでした。');
+
+        // 新しく予約コードを発行したときだけ、トークに一言送る
+        if (data.isNew && data.code) {
+          await sendBookingMessage(data.code);
+        }
 
         location.replace(data.url);
       } catch (e) {
