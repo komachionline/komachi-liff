@@ -3,101 +3,114 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>オンライン診療予約</title>
+  <title>オンライン診察のご予約</title>
   <style>
+    :root {
+      --green: #06c755;
+      --text: #333;
+      --sub: #666;
+      --line: #e5e5e5;
+      --bg: #f7f7f5;
+    }
+    * { box-sizing: border-box; }
     body {
-      margin: 0; min-height: 100vh; padding: 16px; box-sizing: border-box;
-      display: flex; align-items: center; justify-content: center;
+      margin: 0; background: var(--bg); color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
-      background: #fff; color: #333; text-align: center;
+      font-size: 15px; line-height: 1.7;
     }
-    .spinner {
-      width: 36px; height: 36px; margin: 0 auto 16px;
-      border: 3px solid #eee; border-top-color: #06c755; border-radius: 50%;
-      animation: spin 0.9s linear infinite;
+    main { max-width: 480px; margin: 0 auto; padding: 32px 16px 40px; }
+    h1 { font-size: 19px; margin: 0 0 4px; }
+    .lead { color: var(--sub); font-size: 14px; margin: 0 0 20px; }
+    .card {
+      background: #fff; border: 1px solid var(--line); border-radius: 12px;
+      padding: 16px; margin-bottom: 20px;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    p { font-size: 15px; line-height: 1.7; margin: 0 0 16px; white-space: pre-line; }
+    .field-label { display: block; font-weight: 600; margin-bottom: 6px; }
+    input[type="text"] {
+      width: 100%; font-size: 16px; padding: 12px;
+      border: 1px solid #ccc; border-radius: 8px; background: #fff; color: var(--text);
+    }
+    .note { font-size: 13px; color: var(--sub); margin: 8px 0 0; }
     button {
-      font-size: 15px; padding: 12px 24px; border: none; border-radius: 8px;
-      background: #06c755; color: #fff;
+      width: 100%; font-size: 16px; font-weight: 600; padding: 14px;
+      border: none; border-radius: 10px; background: var(--green); color: #fff;
     }
+    button:disabled { background: #bbb; }
   </style>
 </head>
 <body>
-  <div>
-    <div class="spinner" id="spinner"></div>
-    <p id="msg">予約フォームを準備しています…</p>
-    <button id="retry" hidden>もう一度試す</button>
-  </div>
+  <main>
+    <h1>オンライン診察のご予約</h1>
+    <p class="lead">ご予約の確認や当日のご連絡をスムーズに行うため、はじめにお名前をお聞かせください。入力後、予約ページへお進みいただけます。</p>
+
+    <section class="card">
+      <label class="field-label" for="name">お名前（フルネーム）</label>
+      <input type="text" id="name" maxlength="50" autocomplete="name" placeholder="例：山田 花子">
+      <p class="note">予約ページでご登録いただくお名前と同じお名前をご入力ください。入力したお名前は、このLINEのトークから当院にお送りします。</p>
+    </section>
+
+    <button id="go" disabled>予約ページへ進む</button>
+  </main>
 
   <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
     const LIFF_ID = '2012304244-uTpwnqNM';
-    const GAS_URL = 'https://script.google.com/macros/s/AKfycbyo-8gFMiboG0F1NiKk24_CJmXevtfJvbipyr6n1b7eG0EbX3-A3kQ2QY30DamCMs0wjQ/exec';
+    const RESERVE_URL = 'https://reservation.medical-force.com/c/62701986d425441e94c89faadc4386b9/reservations/new?menu_entrance_id=419ef4b1-4b9d-46b0-af8b-a0c5f32df8eb';
 
-    function showError(text) {
-      document.getElementById('spinner').hidden = true;
-      document.getElementById('msg').textContent = text;
-      document.getElementById('retry').hidden = false;
+    const nameInput = document.getElementById('name');
+    const goButton = document.getElementById('go');
+
+    let liffReady = false;   // LIFFの準備が終わったか（失敗した場合も true にして先へ進めるようにする）
+    let sending = false;     // 二重押し防止
+
+    function updateButton() {
+      goButton.disabled = sending || !liffReady || !nameInput.value.trim();
     }
+    nameInput.addEventListener('input', updateButton);
 
-    document.getElementById('retry').addEventListener('click', () => {
-      try { liff.logout(); } catch (e) {}
-      location.reload();
-    });
-
-    // お客様のトークから、クリニックへ予約コードを一言送る
-    // （管理画面のチャットにお客様が表示され、予約コードで照合できるようにするため）
-    // 送れなかった場合も、予約フォームはそのまま開く
-    async function sendBookingMessage(code) {
+    // お客様のトークから、クリニックへお名前を一言送る
+    // （管理画面のチャットにお客様が表示され、medicalforceの予約の名前と照合できるようにするため）
+    // 送れなかった場合も、予約ページへはそのまま進む
+    async function sendNameMessage(name) {
       try {
         if (!liff.isInClient()) return;               // LINEアプリの外で開いた場合は送らない
         const ctx = liff.getContext();
         if (!ctx || !['utou', 'room', 'group'].includes(ctx.type)) return;
         await liff.sendMessages([{
           type: 'text',
-          text: '【オンライン診療予約】\n予約フォームを開きました。\n予約コード：' + code,
+          text: '【オンライン診療予約】\n予約ページを開きました。\nお名前：' + name,
         }]);
       } catch (e) {
         console.error(e);
       }
     }
 
-    async function main() {
+    goButton.addEventListener('click', async () => {
+      if (goButton.disabled) return;
+      sending = true;
+      updateButton();
+      goButton.textContent = '予約ページを開いています…';
+
+      await sendNameMessage(nameInput.value.trim());
+      location.replace(RESERVE_URL);
+    });
+
+    async function init() {
       try {
         await liff.init({ liffId: LIFF_ID });
-        if (!liff.isLoggedIn()) {
+        // LINEアプリ内では自動でログイン済み。万一未ログインならログインしてから戻ってくる
+        if (liff.isInClient() && !liff.isLoggedIn()) {
           liff.login({ redirectUri: location.href });
           return;
         }
-
-        const idToken = liff.getIDToken();
-        if (!idToken) throw new Error('ログイン情報を取得できませんでした。');
-
-        const res = await fetch(GAS_URL + '?idToken=' + encodeURIComponent(idToken));
-        const data = await res.json();
-
-        if (data.error === 'expired') {
-          liff.logout();
-          liff.login({ redirectUri: location.href });
-          return;
-        }
-        if (!data.url) throw new Error(data.error || '予約フォームを準備できませんでした。');
-
-        // 新しく予約コードを発行したときだけ、トークに一言送る
-        if (data.isNew && data.code) {
-          await sendBookingMessage(data.code);
-        }
-
-        location.replace(data.url);
       } catch (e) {
-        showError('申し訳ありません。予約フォームを開けませんでした。\n時間をおいて、もう一度お試しください。');
         console.error(e);
       }
+      liffReady = true;
+      updateButton();
     }
 
-    main();
+    init();
   </script>
 </body>
 </html>
